@@ -17,7 +17,8 @@ const Appp = () => {
     const [callAccepted, setCallAccepted] = useState(false);
     const [message, setMessage] = useState(``);
     const [txtMsg, setTxtMsg] = useState(``);
-    const bookingId = window.location.pathname === `/fan1` ? `12345` : window.location.pathname === `/fan2` ? `1234` : `123`;
+    const [error, setError] = useState(``);
+    const bookingId = window.location.pathname === `/` ? `blank` : window.location.pathname;
 
     const localVideo = useRef();
     const partnerVideo = useRef();
@@ -38,6 +39,7 @@ const Appp = () => {
     useEffect(() => {
         socket.current = io(ENDPOINT);
         getUserMedia({ video: false, audio: true }, (error, stream) => {
+            if(error) setError(error.message);
             setStream(stream);
             if (localVideo.current) {
                 localVideo.current.srcObject = stream;
@@ -53,8 +55,13 @@ const Appp = () => {
         socket.current.on(`message`, ({ msg, from, to }) => {
             setTxtMsg(msg);
         });
+        socket.current.on('callDisconnected', () => {
+            console.log("callDisconnected useEffect", calledTo, partnerVideo.current.srcObject);
+            setIncomingCall(false); setCalledTo(``); setCaller(``); setTxtMsg(``);
+            partnerVideo.current && stopStreamedVideo(partnerVideo.current);
+        });
         return () => {
-            socket.current.close();
+            // socket.current.close();
         }
     }, []);
 
@@ -65,18 +72,19 @@ const Appp = () => {
         peer.on("stream", stream => { if (partnerVideo.current) partnerVideo.current.srcObject = stream });
         socket.current.on("callAccepted", signal => { setCallAccepted(true); peer.signal(signal) })
         socket.current.on("callDeclined", msg => {
-            console.log("callDeclined",calledTo,partnerVideo.current.srcObject);
+            console.log("callDeclined", calledTo, partnerVideo.current.srcObject);
             setCallAccepted(false);
+            setCalledTo(``); setCaller(``); setTxtMsg(``);
             setMessage(`${msg} by ${Object.keys(users).find(u => users[u] !== u && users[u] === id)}`)
         })
         socket.current.on('error', (error) => { console.log("socket error", error) });
         peer.on('error', (err) => { console.log("peer error", err) })
         socket.current.on('callDisconnected', () => {
-            console.log("callDisconnected call",calledTo,partnerVideo.current.srcObject);
-            setIncomingCall(false); setCalledTo(``);
+            console.log("callDisconnected call", calledTo, partnerVideo.current.srcObject);
+            setIncomingCall(false); setCalledTo(``); setCaller(``); setTxtMsg(``);
             peer.removeStream(stream);
             peer.removeAllListeners();
-            stopStreamedVideo(partnerVideo.current);
+            partnerVideo.current && stopStreamedVideo(partnerVideo.current);
         });
     }
 
@@ -87,27 +95,29 @@ const Appp = () => {
         peer.on("stream", stream => partnerVideo.current.srcObject = stream);
         peer.signal(callerSignal);
         socket.current.on("callDeclined", msg => {
-            console.log("callDeclined acceptCall ",calledTo,partnerVideo.current.srcObject);
+            console.log("callDeclined acceptCall ", calledTo, partnerVideo.current.srcObject);
+            setCalledTo(``); setCaller(``); setTxtMsg(``);
             setCallAccepted(false);
             setMessage(`${msg} by ${Object.keys(users).find(u => users[u] !== u && users[u] === caller)}`)
         })
         socket.current.on('error', (error) => { console.log("socket error", error) });
         peer.on('error', (err) => { console.log("peer error", err) })
         socket.current.on('callDisconnected', () => {
-            console.log("callDisconnected acceptCall",calledTo,partnerVideo.current.srcObject);
-            setIncomingCall(false); setCalledTo(``);
+            console.log("callDisconnected acceptCall", calledTo, partnerVideo.current.srcObject);
+            setIncomingCall(false); setCalledTo(``); setCaller(``); setTxtMsg(``);
             peer.removeStream(stream);
             peer.removeAllListeners();
-            stopStreamedVideo(partnerVideo.current);
+            partnerVideo.current && stopStreamedVideo(partnerVideo.current);
         });
     }
 
-    // const sendMessage = () => {
-    //     if (!yourMessage.current.value) return;
-    //     socket.current.send({ msg: yourMessage.current.value, from: myId, to: caller ? caller : calledTo });
-    // }
+    const sendMessage = () => {
+        if (!yourMessage.current.value) return;
+        socket.current.send({ msg: yourMessage.current.value, from: myId, to: caller ? caller : calledTo });
+    }
 
     const stopStreamedVideo = (videoElem) => {
+        console.log("stopStreamedVideo", videoElem, videoElem.srcObject);
         const stream = videoElem.srcObject;
         if (stream) {
             const tracks = stream.getTracks();
@@ -119,9 +129,9 @@ const Appp = () => {
     }
 
     const declineCall = () => {
-        console.log("disconnect",calledTo,partnerVideo.current.srcObject);
         setCallAccepted(false);
         setIncomingCall(false);
+        setCalledTo(``); setCaller(``); setTxtMsg(``);
         socket.current.emit("declined", { to: caller ? caller : calledTo });
     }
 
@@ -144,16 +154,17 @@ const Appp = () => {
     // }
 
     const disconnect = () => {
-        // if (calledTo && !partnerVideo.current.srcObject) return declineCall();
-        stopStreamedVideo(partnerVideo.current);
+        console.log("caller", caller, "calledTo", calledTo, "users",users);
+        partnerVideo.current && stopStreamedVideo(partnerVideo.current);
         socket.current.emit(`disconnectCall`, { to: caller ? caller : calledTo }, () => { declineCall() })
     }
+
+    
 
     return (
         <div>
             <div className="video">
                 <div className="box">{getPartnerVideo()}{getLocalVideo()}</div>
-                {console.log("incomingCall && !callAccepted", incomingCall && !callAccepted, incomingCall, callAccepted)}
                 {incomingCall && !callAccepted && incomingCallIndicator()}
             </div>
             {!calledTo && !incomingCall && !callAccepted && Object.keys(users).map(key => {
@@ -165,11 +176,12 @@ const Appp = () => {
                 );
             })}
             <pre>{message}</pre>
-            <button onClick={() => disconnect()}>Disconnect</button><br />
-            {/* <label>Enter Message:</label><br />
+            {error && <h1>{error}</h1>}
+            { (calledTo || callAccepted) && <button onClick={() => disconnect()}>Disconnect</button>}<br />
+            <label>Enter Message:</label><br />
             <textarea ref={yourMessage}></textarea>
             <button onClick={sendMessage} >send</button>
-            <pre>{txtMsg}</pre> */}
+            <pre>{txtMsg}</pre>
         </div>
     );
 }
